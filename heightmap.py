@@ -4,6 +4,7 @@ from enum import Enum
 from tabulate import tabulate
 import argparse
 import random
+import math
 import opensimplex as simplex
 import numpy as np
 
@@ -39,11 +40,12 @@ _parser = argparse.ArgumentParser()
 _parser.add_argument("--size", type=int, required=True)
 _parser.add_argument("--seed", type=int, default=int(random.random() * 1000))
 _parser.add_argument("--mode", choices=["L", "RGB"], default="L")
-_parser.add_argument("-b", "--blend", type=int, choices=[0, 4, 8], default = 0)
-_parser.add_argument("-f", "--frequency", type=float, default=4.0)
-_parser.add_argument("-o", "--octaves", type=int, default=1)
-_parser.add_argument("-a", "--amplitude", type=float, default=1.0)
-_parser.add_argument("-e", "--exponent", type=float, default=1.0)
+_parser.add_argument("-b", "--blend", type=int, choices=[0, 4, 8], default=0)
+_parser.add_argument("-f", "--frequency", type=float, default=4)
+_parser.add_argument("-o", "--octaves", type=int, default=4)
+_parser.add_argument("-a", "--amplitude", type=float, default=2)
+_parser.add_argument("-e", "--exponent", type=float, default=2)
+_parser.add_argument("-s", "--shadows", type=float, default=0)
 _parser.add_argument("-d", "--diverse", action="store_true")
 _parser.add_argument("-t", "--trees", action="store_true")
 _parser.add_argument("-v", "--verbose", action="store_true")
@@ -121,7 +123,6 @@ def output_biome_details(size, biomemap):
 #noise
 #Produce a noise value depending on an amount of octaves and its corresponding amplitude
 def noise(nx, ny, amps, exp):
-    #sn
     #Rescale simplex noise output from -1.0:+1.0 to 0.0:1.0
     def sn(nx, ny):
         return simplex.noise2(nx, ny) / 2.0 + 0.5
@@ -179,8 +180,8 @@ def generate_heightmap(seed, size, freq, amps, exp):
     return normalise_heightmap(min, max, size, heightmap)
 
 #generate_treemap
-#Creates a numPy array of RGB values based on @colourmap and places black pixels in specific positions determined by the biome
-#obtained from @heightmap and @moisturemap and values of @noisemap 
+#Creates a numPy array of RGB values based on @colourmap and places darker pixels in specific positions determined by the biome
+#obtained from @biomemap and values of @noisemap 
 def generate_treemap(size, noisemap, biomemap, colourmap):
     treemap = np.zeros((*size, 3))
 
@@ -215,6 +216,48 @@ def generate_treemap(size, noisemap, biomemap, colourmap):
     
     return treemap
 
+#generate_shadowmap
+#Creates a numPy array of values limited to either 0 or 1, based on whether or not the position in the heightmap is obstructed as viewed from the 'sun' position
+def generate_shadowmap(size, heightmap, z):
+    #Add @u + @v
+    def add(u, v):
+        return [u[i] + v[i] for i in range(len(u))]
+
+    #Subtract @u - @v
+    def sub(u, v):
+        return [u[i] - v[i] for i in range(len(u))]
+
+    #Normalise values within a list
+    def normalise(v):
+        def magnitude(v):
+            return math.sqrt(sum(v[i] * v[i] for i in range(len(v))))
+
+        vmag = magnitude(v)
+        return [v[i] / vmag  for i in range(len(v))]
+
+    shadowmap = np.full(size, 1)
+    sun = [size[0] / 4, 0, z]
+
+    with alive_bar(size[0] * size[1]) as bar:
+        bar.text("Generating shadowmap")
+        for y in range(0, size[1]):
+            for x in range(0, size[0]):
+                pos = [x, y, heightmap[y, x]]
+                dir = normalise(sub(sun, pos)) 
+
+                while pos[0] >= 0 and pos[0] < size[1] and pos[1] >= 0 and pos[1] < size[0] and pos[2] < 1:
+                    pos = add(pos, dir)
+                    nx = min(int(round(pos[0])), size[0] - 1)
+                    ny = min(int(round(pos[1])), size[1] - 1)
+                    
+                    if pos[2] <= heightmap[ny, nx]:
+                        shadowmap[y, x] = 0
+                        break
+                
+                bar()
+
+    return shadowmap
+
 #generate_blendmap
 #Creates a numPy array of averaged RGB values based on @colourmap and the amount of neighbours to obtain provided by @blnd
 def generate_blendmap(blnd, size, colourmap):
@@ -232,12 +275,15 @@ def generate_blendmap(blnd, size, colourmap):
 
 #generate_colourmap
 #Creates a numPy array of RGB values based on @biomemap
-def generate_colourmap(size, biomemap):
+def generate_colourmap(size, biomemap, shadowmap):
     colourmap = np.zeros((*size, 3))
 
     for y in range(0, size[1]):
             for x in range(0, size[0]):
                 colourmap[y, x] = _biome[biomemap[y, x]]["RGB"]
+                if shadowmap[y, x] == 0:
+                    colourmap[y, x] = np.subtract(colourmap[y, x], colourmap[y, x] / 2)
+    
 
     return colourmap
 
@@ -254,15 +300,16 @@ def generate_biomemap(size, heightmap, moisturemap):
 
 #generate_imagemap
 #Convert a heightmap to colour values based on @mode
-def generate_imagemap(mode, seed, size, freq, amps, exp, div, blnd, tree, ver):
+def generate_imagemap(mode, seed, size, freq, amps, exp, div, blnd, tree, ver, shdw):
     heightmap = generate_heightmap(seed, size, freq, amps, exp)
 
     if mode == _mode.L:
         return heightmap * 255
     elif mode == _mode.RGB:
+        shadowmap = generate_shadowmap(size, heightmap, shdw) if shdw > 0 else np.full(size, 1)
         moisturemap = generate_heightmap(seed + 1, size, freq, amps, exp) if div else np.flip(np.flip(heightmap, 0), 1)
         biomemap = generate_biomemap(size, heightmap, moisturemap)
-        colourmap = generate_colourmap(size, biomemap) if blnd == 0 else generate_blendmap(blnd, size, generate_colourmap(size, biomemap))
+        colourmap = generate_colourmap(size, biomemap, shadowmap) if blnd == 0 else generate_blendmap(blnd, size, generate_colourmap(size, biomemap, shadowmap))
         finalmap = generate_treemap(size, generate_heightmap(seed, size, size[0], [1.0], 1), biomemap, colourmap) if tree else colourmap
 
         print("\nHeightmap generated, seed:", seed)
@@ -274,7 +321,7 @@ def generate_imagemap(mode, seed, size, freq, amps, exp, div, blnd, tree, ver):
 #Creates an image from an array of colours
 def generate_image(mode, colourmap):
     img = Image.fromarray(colourmap.astype("uint8"), mode.name)
-    img.save("heightmap.png")
+    img.save("heightmap.jpg")
     img.show()
 
 #main
@@ -291,13 +338,14 @@ def main():
     exp = _args.exponent
     div = _args.diverse
     ver = _args.verbose
+    shdw = _args.shadows
 
     amps = np.arange(1.0, oct + 1)
     if amp > 1:
         for i in range(1, oct):
             amps[i] = (amps[i - 1]) * amp
 
-    generate_image(mode, generate_imagemap(mode, seed, size, freq, amps, exp, div, blnd, tree, ver))
+    generate_image(mode, generate_imagemap(mode, seed, size, freq, amps, exp, div, blnd, tree, ver, shdw))
 
 if __name__ == "__main__":
     main()
