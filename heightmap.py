@@ -190,6 +190,7 @@ def generate_treemap(size, noisemap, biomemap, colourmap):
                 for x in range(0, size[0]):
                     max = 0
                     td = _biome[biomemap[y, x]]["TD"]
+                    treemap[y][x] = colourmap[y][x]
 
                     if td > 0:
                         #Invert tree density value, lower radius to search equals more trees
@@ -206,9 +207,9 @@ def generate_treemap(size, noisemap, biomemap, colourmap):
                                     nv = noisemap[yn][xn]
                                     if nv > max: max = nv
                         
-                        treemap[y][x] = [0, 0, 0] if noisemap[y][x] == max else colourmap[y][x]
-                    else:
-                        treemap[y][x] = colourmap[y][x]
+
+                        if noisemap[y][x] == max: 
+                            treemap[y][x] = np.subtract(treemap[y][x], treemap[y][x] / 3)
 
                     bar()
     
