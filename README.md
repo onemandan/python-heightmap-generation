@@ -4,7 +4,7 @@ Simple Python script to generate a heightmap using PIL and simplex noise
 options:
 - -h, --help
 - --size (REQUIRED) - Size of the resulting heightmap image in pixels size x size
-- --seed - (DEFAULT: RAND) - Number to generate the simplex noise generator with
+- --seed - (DEFAULT: RAND) - Number to seed the simplex noise generator with
 - --mode {L, RGB} - (DEFAULT: "L") - Greyscale or colour
 - -f|--frequency - (DEFAULT: 4.0) - How 'zoomed' the heightmap is, lower is more 'zoomed in'
 - -o|--octaves - (DEFAULT: 1) - Amount of noise passes when generating the heightmap, higher is slower but more detailed
